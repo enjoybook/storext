@@ -1,12 +1,66 @@
 module Storext
   module ClassMethods
 
+    def define_track_updated_attrs(column, attr)
+      store_name = updated_attrs_store_name(column)
+      define_updated_attrs_store(store_name)
+      define_reset_updated_attrs(store_name)
+
+      define_was(store_name, attr)
+      define_touched(store_name, attr)
+      define_changed(attr)
+    end
+
+    def define_changed(attr)
+      define_method "#{attr}_changed?" do
+        send("#{attr}_touched?") && send(attr.to_s) != send("#{attr}_was")
+      end
+    end
+
+    def define_touched(store_name, attr)
+      define_method "#{attr}_touched?" do
+        send(store_name).include?(attr.to_s)
+      end
+    end
+
+    def define_was(store_name, attr)
+      define_method "#{attr}_was" do
+        send(store_name)[attr.to_s]
+      end
+    end
+
+    def define_updated_attrs_store(store_name)
+      define_method store_name do
+        store = instance_variable_get("@#{store_name}")
+        return store if store.present?
+        instance_variable_set("@#{store_name}".to_sym, ActiveSupport::HashWithIndifferentAccess.new)
+      end
+    end
+
+    def define_reset_updated_attrs(store_name)
+      define_method "reset_#{store_name}" do
+        instance_variable_set("@#{store_name}".to_sym, ActiveSupport::HashWithIndifferentAccess.new)
+      end
+    end
+
+    def updated_attrs_store_name(column)
+      "updated_#{column}"
+    end
+
     def storext_define_writer(column, attr)
+      updated_attrs_store = updated_attrs_store_name(column)
+
       define_method "#{attr}=" do |value|
         coerced_value = storext_cast_proxy.send("#{attr}=", value)
 
         send("#{column}=", send(column) || {})
+
+        unless send("#{attr}_changed?")
+          send(updated_attrs_store)[attr.to_s] = send(column)[attr.to_s]
+        end
+
         write_store_attribute column, attr, coerced_value
+
         send(column)[attr.to_s] = coerced_value
       end
     end
@@ -40,6 +94,7 @@ module Storext
     end
 
     def storext_define_accessor(column, attr)
+      define_track_updated_attrs(column, attr)
       storext_define_writer(column, attr)
       storext_define_reader(column, attr)
       storext_define_predicater(column, attr)
